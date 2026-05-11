@@ -1,22 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
-###########################################################################
-# Copyright © 1998 - 2026 Tencent. All Rights Reserved.
-###########################################################################
-"""
-Author: Tencent AI Arena Authors
-"""
 
-
-from common_python.utils.common_func import create_cls, Frame
-import numpy as np
 import collections
-import random
-from agent_diy.conf.conf import Config
 import itertools
+import random
 
-# Loop through camps, shuffling camps before each major loop
-# 循环返回camps, 每次大循环前对camps进行shuffle
+import numpy as np
+from common_python.utils.common_func import Frame, create_cls
+
+from agent_diy.conf.conf import Config
+
+
 def _lineup_iterator_shuffle_cycle(camps):
     while True:
         random.shuffle(camps)
@@ -24,25 +18,17 @@ def _lineup_iterator_shuffle_cycle(camps):
             yield camp
 
 
-# Specify single-side multi-agent lineups, looping through all pairwise combinations
-# 指定单边多智能体阵容，两两组合循环
 def lineup_iterator_roundrobin_camp_heroes(camp_heroes=None):
     if not camp_heroes:
-        raise Exception(f"camp_heroes is empty")
-
+        raise Exception("camp_heroes is empty")
     camps = []
     for lineups in itertools.product(camp_heroes, camp_heroes):
-        camp = []
-        for lineup in lineups:
-            camp.append(lineup)
-        camps.append(camp)
+        camps.append(list(lineups))
     return _lineup_iterator_shuffle_cycle(camps)
 
 
 ObsData = create_cls("ObsData", feature=None, legal_action=None, lstm_cell=None, lstm_hidden=None)
 
-# ActData needs to contain d_action and d_prob, used for visualization
-# ActData 需要包含 d_action 和 d_prob, 用于可视化智能体预测概率
 ActData = create_cls(
     "ActData",
     action=None,
@@ -54,12 +40,7 @@ ActData = create_cls(
     lstm_hidden=None,
 )
 
-# SampleData for training, total dimension is sum of all data_shapes
-# SampleData 用于训练，总维度是所有 data_shapes 的总和
-SampleData = create_cls(
-    "SampleData",
-    sample=sum([shape[0] for shape in Config.data_shapes]),
-)
+SampleData = create_cls("SampleData", sample=sum([shape[0] for shape in Config.data_shapes]))
 
 NONE_ACTION = [0, 15, 15, 15, 15, 0]
 
@@ -68,34 +49,24 @@ def sample_process(collector):
     return collector.sample_process()
 
 
-# Create the sample for the current frame
-# 创建当前帧的样本
 def build_frame(agent, observation):
     obs_data, act_data = agent.obs_data, agent.act_data
-    is_train = False
     frame_state = observation["frame_state"]
-    hero_list = frame_state["hero_states"]
     frame_no = frame_state["frame_no"]
-    for hero in hero_list:
-        hero_camp = hero["camp"]
-        hero_hp = hero["hp"]
-        if hero_camp == agent.hero_camp:
-            is_train = True if hero_hp > 0 else False
+    is_train = False
+    for hero in frame_state.get("hero_states", []):
+        if hero.get("camp") == agent.hero_camp:
+            is_train = hero.get("hp", 0) > 0
+            break
 
-    if obs_data.feature is not None:
-        feature_vec = np.array(obs_data.feature)
-    else:
-        feature_vec = np.array(observation["observation"])
-
+    feature_vec = np.array(obs_data.feature if obs_data.feature is not None else observation["feature"])
     reward = observation["reward"]["reward_sum"]
-
     sub_action_mask = observation["sub_action_mask"]
-
     prob, value, action = act_data.prob, act_data.value, act_data.action
     lstm_cell, lstm_hidden = act_data.lstm_cell, act_data.lstm_hidden
-
     legal_action = _update_legal_action(observation["legal_action"], action)
-    frame = Frame(
+
+    return Frame(
         frame_no=frame_no,
         feature=feature_vec.reshape([-1]),
         legal_action=legal_action.reshape([-1]),
@@ -110,11 +81,8 @@ def build_frame(agent, observation):
         lstm_info=np.concatenate([lstm_cell.flatten(), lstm_hidden.flatten()]).reshape([-1]),
         is_train=False if action[0] < 0 else is_train,
     )
-    return frame
 
 
-# Construct legal_action based on the actual action taken
-# 根据实际采用的action，构建legal_action
 def _update_legal_action(original_la, action):
     target_size = Config.LABEL_SIZE_LIST[-1]
     top_size = Config.LABEL_SIZE_LIST[0]
@@ -129,24 +97,17 @@ class FrameCollector:
     def __init__(self, num_agents):
         self._data_shapes = Config.data_shapes
         self._LSTM_FRAME = Config.LSTM_TIME_STEPS
+        self.gamma = Config.GAMMA
+        self.lamda = Config.LAMDA
+        self.reset(num_agents)
 
+    def reset(self, num_agents):
         self.num_agents = num_agents
         self.rl_data_map = [collections.OrderedDict() for _ in range(num_agents)]
         self.m_replay_buffer = [[] for _ in range(num_agents)]
 
-        self.gamma = Config.GAMMA
-        self.lamda = Config.LAMDA
-
-    def reset(self, num_agents):
-        self.num_agents = num_agents
-        self.rl_data_map = [collections.OrderedDict() for _ in range(self.num_agents)]
-        self.m_replay_buffer = [[] for _ in range(self.num_agents)]
-
     def save_frame(self, rl_data_info, agent_id):
-        # samples must saved by frame_no order
-        # 样本必须按帧号顺序保存
         reward = self._clip_reward(rl_data_info.reward)
-
         if len(self.rl_data_map[agent_id]) > 0:
             last_key = list(self.rl_data_map[agent_id].keys())[-1]
             last_rl_data_info = self.rl_data_map[agent_id][last_key]
@@ -169,35 +130,20 @@ class FrameCollector:
         return self.m_replay_buffer
 
     def _calc_reward(self):
-        """
-        Calculate cumulated reward and advantage with GAE.
-        reward_sum: used for value loss
-        advantage: used for policy loss
-        V(s) here is a approximation of target network
-        """
-        """
-        计算累积奖励和优势函数（GAE）。
-        reward_sum: 用于值损失
-        advantage: 用于策略损失
-        V(s) 这里是目标网络的近似值
-        """
         for i in range(self.num_agents):
             reversed_keys = list(self.rl_data_map[i].keys())
             reversed_keys.reverse()
-            gae, last_gae = 0.0, 0.0
-            for j in reversed_keys:
-                rl_info = self.rl_data_map[i][j]
+            gae = 0.0
+            for key in reversed_keys:
+                rl_info = self.rl_data_map[i][key]
                 delta = -rl_info.value + rl_info.reward + self.gamma * rl_info.next_value
                 gae = gae * self.gamma * self.lamda + delta
                 rl_info.advantage = gae
                 rl_info.reward_sum = gae + rl_info.value
 
-    # For every LSTM_TIME_STEPS samples, concatenate 1 LSTM state
-    # 每LSTM_TIME_STEPS个样本，需要拼接1个lstm状态
     def _reshape_lstm_batch_sample(self, sample_batch, sample_lstm):
         sample = np.zeros([np.prod(sample_batch.shape) + np.prod(sample_lstm.shape)])
         idx, s_idx = 0, 0
-
         sample[-sample_lstm.shape[0] :] = sample_lstm
         for split_shape in self._data_shapes[:-2]:
             one_shape = split_shape[0] // self._LSTM_FRAME
@@ -206,23 +152,17 @@ class FrameCollector:
             s_idx += split_shape[0]
         return sample.astype(np.float32)
 
-    # Create the sample for the current frame
-    # 根据LSTM_TIME_STEPS，组合送入样本池的样本
     def _format_data(self):
         sample_one_size = np.sum(self._data_shapes[:-2]) // self._LSTM_FRAME
         sample_lstm_size = np.sum(self._data_shapes[-2:])
         sample_batch = np.zeros([self._LSTM_FRAME, sample_one_size])
-        first_frame_no = -1
 
         for i in range(self.num_agents):
             sample_lstm = np.zeros([sample_lstm_size])
             cnt = 0
-            for j in self.rl_data_map[i]:
-                rl_info = self.rl_data_map[i][j]
-                if cnt == 0:
-                    first_frame_no = rl_info.frame_no
-
-                idx, dlen = 0, 0
+            for key in self.rl_data_map[i]:
+                rl_info = self.rl_data_map[i][key]
+                idx = 0
 
                 dlen = rl_info.feature.shape[0]
                 sample_batch[cnt, idx : idx + dlen] = rl_info.feature
@@ -259,18 +199,15 @@ class FrameCollector:
                 if cnt == self._LSTM_FRAME:
                     cnt = 0
                     sample_array = self._reshape_lstm_batch_sample(sample_batch, sample_lstm)
-                    # Wrap sample array into SampleData object
-                    # 将样本数组包装为 SampleData 对象
                     self.m_replay_buffer[i].append(SampleData(sample=sample_array))
                     sample_lstm = rl_info.lstm_info
 
     def _clip_reward(self, reward, max=100, min=-100):
         if reward > max:
-            reward = max
-        elif reward < min:
-            reward = min
+            return max
+        if reward < min:
+            return min
         return reward
 
     def __len__(self):
         return max([len(agent_samples) for agent_samples in self.rl_data_map])
-

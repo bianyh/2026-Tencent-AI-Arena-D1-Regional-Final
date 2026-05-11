@@ -1,253 +1,209 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
-###########################################################################
-# Copyright © 1998 - 2026 Tencent. All Rights Reserved.
-###########################################################################
-"""
-Author: Tencent AI Arena Authors
-"""
-
 
 import math
+
 from agent_diy.conf.conf import GameConfig
+from agent_diy.feature.state_info import ACTOR_SUB_SOLDIER, ACTOR_SUB_TOWER, ACTOR_TYPE_ORGAN
 
 
-# Used to record various reward information
-# 用于记录各个奖励信息
 class RewardStruct:
-    def __init__(self, m_weight=0.0):
+    def __init__(self, weight=0.0):
         self.cur_frame_value = 0.0
         self.last_frame_value = 0.0
         self.value = 0.0
-        self.weight = m_weight
-        self.min_value = -1
-        self.is_first_arrive_center = True
+        self.weight = weight
 
 
-# Used to initialize various reward information
-# 用于初始化各个奖励信息
 def init_calc_frame_map():
-    calc_frame_map = {}
-    for key, weight in GameConfig.REWARD_WEIGHT_DICT.items():
-        calc_frame_map[key] = RewardStruct(weight)
-    return calc_frame_map
+    return {key: RewardStruct(weight) for key, weight in GameConfig.REWARD_WEIGHT_DICT.items()}
 
 
 class GameRewardManager:
-    TOWER_SUB_TYPE = 21
-
     def __init__(self, main_hero_runtime_id):
-        self.main_hero_player_id = main_hero_runtime_id
+        self.main_hero_runtime_id = main_hero_runtime_id
         self.main_hero_camp = -1
-        self.main_hero_hp = -1
-        self.main_hero_organ_hp = -1
         self.m_reward_value = {}
-        self.m_last_frame_no = -1
         self.m_cur_calc_frame_map = init_calc_frame_map()
         self.m_main_calc_frame_map = init_calc_frame_map()
         self.m_enemy_calc_frame_map = init_calc_frame_map()
-        self.m_init_calc_frame_map = {}
         self.time_scale_arg = GameConfig.TIME_SCALE_ARG
-        self.m_main_hero_config_id = -1
         self.m_each_level_max_exp = {}
+        self.init_max_exp_of_each_hero()
 
-    # Used to initialize the maximum experience value for each agent level
-    # 用于初始化智能体各个等级的最大经验值
     def init_max_exp_of_each_hero(self):
         self.m_each_level_max_exp.clear()
-        self.m_each_level_max_exp[1] = 160
-        self.m_each_level_max_exp[2] = 298
-        self.m_each_level_max_exp[3] = 446
-        self.m_each_level_max_exp[4] = 524
-        self.m_each_level_max_exp[5] = 613
-        self.m_each_level_max_exp[6] = 713
-        self.m_each_level_max_exp[7] = 825
-        self.m_each_level_max_exp[8] = 950
-        self.m_each_level_max_exp[9] = 1088
-        self.m_each_level_max_exp[10] = 1240
-        self.m_each_level_max_exp[11] = 1406
-        self.m_each_level_max_exp[12] = 1585
-        self.m_each_level_max_exp[13] = 1778
-        self.m_each_level_max_exp[14] = 1984
+        values = {
+            1: 160,
+            2: 298,
+            3: 446,
+            4: 524,
+            5: 613,
+            6: 713,
+            7: 825,
+            8: 950,
+            9: 1088,
+            10: 1240,
+            11: 1406,
+            12: 1585,
+            13: 1778,
+            14: 1984,
+        }
+        self.m_each_level_max_exp.update(values)
 
     def result(self, frame_data):
-        self.init_max_exp_of_each_hero()
         self.frame_data_process(frame_data)
         self.get_reward(frame_data, self.m_reward_value)
-
-        frame_no = frame_data["frame_no"]
-        if self.time_scale_arg > 0:
-            for key in self.m_reward_value:
-                self.m_reward_value[key] *= math.pow(0.6, 1.0 * frame_no / self.time_scale_arg)
-
         return self.m_reward_value
 
-    # Calculate the value of each reward item in each frame
-    # 计算每帧的每个奖励子项的信息
-    def set_cur_calc_frame_vec(self, cul_calc_frame_map, frame_data, camp):
-
-        # Get both agents
-        # 获取双方智能体
+    def set_cur_calc_frame_vec(self, calc_frame_map, frame_data, camp):
         main_hero, enemy_hero = None, None
-        hero_list = frame_data["hero_states"]
-        for hero in hero_list:
-            hero_camp = hero["camp"]
-            if hero_camp == camp:
+        for hero in frame_data.get("hero_states", []):
+            if hero.get("camp") == camp:
                 main_hero = hero
             else:
                 enemy_hero = hero
+        if main_hero is None:
+            return
 
-        # Get both defense towers
-        # 获取双方防御塔
         main_tower, enemy_tower = None, None
-        enemy_soldiers = []
-        npc_list = frame_data["npc_states"]
-        for organ in npc_list:
-            organ_camp = organ["camp"]
-            organ_subtype = organ["sub_type"]
-            if organ_camp == camp:
-                if organ_subtype == self.TOWER_SUB_TYPE:
-                    main_tower = organ
+        for npc in frame_data.get("npc_states", []):
+            if npc.get("actor_type") != ACTOR_TYPE_ORGAN or npc.get("sub_type") != ACTOR_SUB_TOWER:
+                continue
+            if npc.get("camp") == camp:
+                main_tower = npc
             else:
-                if organ_subtype == self.TOWER_SUB_TYPE:
-                    enemy_tower = organ
-                else:
-                    enemy_soldiers.append(organ)
+                enemy_tower = npc
+        if main_tower is None:
+            main_tower = {"hp": 0, "max_hp": 1, "location": {"x": 0, "z": 0}}
+        if enemy_tower is None:
+            enemy_tower = {"hp": 0, "max_hp": 1, "location": {"x": 0, "z": 0}}
 
-        for reward_name, reward_struct in cul_calc_frame_map.items():
+        hp = main_hero.get("hp", 0)
+        hp_max = max(main_hero.get("max_hp", 1), 1)
+        ep = main_hero.get("ep", 0)
+        ep_max = max(main_hero.get("max_ep", 1), 1)
+
+        for reward_name, reward_struct in calc_frame_map.items():
             reward_struct.last_frame_value = reward_struct.cur_frame_value
-            # Tower health points
-            # 塔血量
-            if reward_name == "tower_hp_point":
-                reward_struct.cur_frame_value = self._safe_rate(main_tower, "hp", "max_hp")
-            elif reward_name == "hero_hp_point":
-                reward_struct.cur_frame_value = self._safe_rate(main_hero, "hp", "max_hp")
-            elif reward_name == "money":
-                reward_struct.cur_frame_value = self._safe_value(main_hero, "money_cnt", self._safe_value(main_hero, "money"))
-            elif reward_name == "exp":
-                reward_struct.cur_frame_value = self._safe_value(main_hero, "exp")
+            if reward_name == "money":
+                reward_struct.cur_frame_value = main_hero.get("money_cnt", main_hero.get("money", 0))
+            elif reward_name == "hp_point":
+                reward_struct.cur_frame_value = math.sqrt(math.sqrt(max(hp / hp_max, 0.0)))
+            elif reward_name == "ep_rate":
+                reward_struct.cur_frame_value = ep / ep_max if hp > 0 else 0.0
             elif reward_name == "kill":
-                reward_struct.cur_frame_value = self._safe_value(main_hero, "kill_cnt")
+                reward_struct.cur_frame_value = main_hero.get("kill_cnt", 0)
             elif reward_name == "death":
-                reward_struct.cur_frame_value = self._safe_value(main_hero, "dead_cnt")
-            elif reward_name == "hurt_to_hero":
-                reward_struct.cur_frame_value = self._safe_value(main_hero, "total_hurt_to_hero")
-            elif reward_name == "hurt_by_hero":
-                reward_struct.cur_frame_value = self._safe_value(main_hero, "total_be_hurt_by_hero")
+                reward_struct.cur_frame_value = main_hero.get("dead_cnt", 0)
+            elif reward_name == "tower_hp_point":
+                reward_struct.cur_frame_value = main_tower.get("hp", 0) / max(main_tower.get("max_hp", 1), 1)
             elif reward_name == "last_hit":
-                reward_struct.cur_frame_value = self._estimate_last_hit_value(frame_data, camp, enemy_soldiers)
-            # Forward
-            # 前进
+                reward_struct.cur_frame_value = self.calculate_last_hit(frame_data, main_hero, enemy_hero)
+            elif reward_name == "exp":
+                reward_struct.cur_frame_value = self.calculate_exp_sum(main_hero)
             elif reward_name == "forward":
                 reward_struct.cur_frame_value = self.calculate_forward(main_hero, main_tower, enemy_tower)
-            elif reward_name == "unsafe_forward":
-                reward_struct.cur_frame_value = self.calculate_unsafe_forward(main_hero, main_tower, enemy_tower, enemy_hero)
 
-    # Calculate the forward reward based on the distance between the agent and both defensive towers
-    # 用智能体到双方防御塔的距离，计算前进奖励
+    def calculate_last_hit(self, frame_data, main_hero, enemy_hero):
+        if enemy_hero is None:
+            return 0.0
+        value = 0.0
+        dead_actions = (frame_data.get("frame_action") or {}).get("dead_action", [])
+        for dead_action in dead_actions:
+            death = dead_action.get("death", {})
+            killer = dead_action.get("killer", {})
+            if death.get("sub_type") != ACTOR_SUB_SOLDIER:
+                continue
+            if killer.get("runtime_id") == main_hero.get("runtime_id"):
+                value += 1.0
+            elif killer.get("runtime_id") == enemy_hero.get("runtime_id"):
+                value -= 1.0
+        return value
+
+    def calculate_exp_sum(self, hero):
+        exp_sum = 0.0
+        for level in range(1, hero.get("level", 1)):
+            exp_sum += self.m_each_level_max_exp.get(level, 0)
+        exp_sum += hero.get("exp", 0)
+        return exp_sum
+
     def calculate_forward(self, main_hero, main_tower, enemy_tower):
-        if main_hero is None or main_tower is None or enemy_tower is None:
-            return 0
-        main_tower_pos = (main_tower["location"]["x"], main_tower["location"]["z"])
-        enemy_tower_pos = (enemy_tower["location"]["x"], enemy_tower["location"]["z"])
-        hero_pos = (
-            main_hero["location"]["x"],
-            main_hero["location"]["z"],
-        )
-        forward_value = 0
-        dist_hero2emy = math.dist(hero_pos, enemy_tower_pos)
-        dist_main2emy = math.dist(main_tower_pos, enemy_tower_pos)
-        if main_hero["hp"] / main_hero["max_hp"] > 0.99 and dist_hero2emy > dist_main2emy:
-            forward_value = (dist_main2emy - dist_hero2emy) / dist_main2emy
-        return forward_value
+        hero_hp_rate = main_hero.get("hp", 0) / max(main_hero.get("max_hp", 1), 1)
+        if hero_hp_rate <= 0.99:
+            return 0.0
+        hero_pos = (main_hero.get("location", {}).get("x", 0), main_hero.get("location", {}).get("z", 0))
+        main_tower_pos = (main_tower.get("location", {}).get("x", 0), main_tower.get("location", {}).get("z", 0))
+        enemy_tower_pos = (enemy_tower.get("location", {}).get("x", 0), enemy_tower.get("location", {}).get("z", 0))
+        dist_hero_enemy = math.dist(hero_pos, enemy_tower_pos)
+        dist_main_enemy = max(math.dist(main_tower_pos, enemy_tower_pos), 1.0)
+        if dist_hero_enemy > dist_main_enemy:
+            return (dist_main_enemy - dist_hero_enemy) / dist_main_enemy
+        return 0.0
 
-    def calculate_unsafe_forward(self, main_hero, main_tower, enemy_tower, enemy_hero):
-        if main_hero is None or main_tower is None or enemy_tower is None:
-            return 0
-        hp_rate = self._safe_rate(main_hero, "hp", "max_hp")
-        if hp_rate >= 0.35:
-            return 0
-        hero_pos = (main_hero["location"]["x"], main_hero["location"]["z"])
-        main_tower_pos = (main_tower["location"]["x"], main_tower["location"]["z"])
-        enemy_tower_pos = (enemy_tower["location"]["x"], enemy_tower["location"]["z"])
-        total_dist = max(math.dist(main_tower_pos, enemy_tower_pos), 1.0)
-        progress = 1.0 - min(math.dist(hero_pos, enemy_tower_pos) / total_dist, 1.0)
-        enemy_near = 0
-        if enemy_hero is not None and enemy_hero["hp"] > 0:
-            enemy_pos = (enemy_hero["location"]["x"], enemy_hero["location"]["z"])
-            enemy_near = 1 if math.dist(hero_pos, enemy_pos) < 8000 else 0
-        return progress * (1.0 + enemy_near)
-
-    # Calculate the reward item information for both sides using frame data
-    # 用帧数据来计算两边的奖励子项信息
     def frame_data_process(self, frame_data):
         main_camp, enemy_camp = -1, -1
-
-        for hero in frame_data["hero_states"]:
-            if hero["runtime_id"] == self.main_hero_player_id:
-                main_camp = hero["camp"]
+        for hero in frame_data.get("hero_states", []):
+            if hero.get("runtime_id") == self.main_hero_runtime_id:
+                main_camp = hero.get("camp")
                 self.main_hero_camp = main_camp
             else:
-                enemy_camp = hero["camp"]
+                enemy_camp = hero.get("camp")
+        if main_camp == -1:
+            return
         self.set_cur_calc_frame_vec(self.m_main_calc_frame_map, frame_data, main_camp)
         self.set_cur_calc_frame_vec(self.m_enemy_calc_frame_map, frame_data, enemy_camp)
 
-    # Use the values obtained in each frame to calculate the corresponding reward value
-    # 用每一帧得到的奖励子项信息来计算对应的奖励值
     def get_reward(self, frame_data, reward_dict):
         reward_dict.clear()
-        reward_sum, weight_sum = 0.0, 0.0
+        frame_no = frame_data.get("frame_no", frame_data.get("frameNo", 0))
+        reward_sum = 0.0
         for reward_name, reward_struct in self.m_cur_calc_frame_map.items():
-            if reward_name == "forward":
+            if reward_name == "hp_point":
+                main_last = self.m_main_calc_frame_map[reward_name].last_frame_value
+                enemy_last = self.m_enemy_calc_frame_map[reward_name].last_frame_value
+                main_cur = self.m_main_calc_frame_map[reward_name].cur_frame_value
+                enemy_cur = self.m_enemy_calc_frame_map[reward_name].cur_frame_value
+                reward_struct.cur_frame_value = main_cur - enemy_cur
+                reward_struct.last_frame_value = main_last - enemy_last
+                reward_struct.value = reward_struct.cur_frame_value - reward_struct.last_frame_value
+            elif reward_name == "ep_rate":
+                reward_struct.cur_frame_value = self.m_main_calc_frame_map[reward_name].cur_frame_value
+                reward_struct.last_frame_value = self.m_main_calc_frame_map[reward_name].last_frame_value
+                reward_struct.value = (
+                    reward_struct.cur_frame_value - reward_struct.last_frame_value
+                    if reward_struct.last_frame_value > 0
+                    else 0
+                )
+            elif reward_name == "exp":
+                main_cur = self.m_main_calc_frame_map[reward_name].cur_frame_value
+                enemy_cur = self.m_enemy_calc_frame_map[reward_name].cur_frame_value
+                main_last = self.m_main_calc_frame_map[reward_name].last_frame_value
+                enemy_last = self.m_enemy_calc_frame_map[reward_name].last_frame_value
+                reward_struct.cur_frame_value = main_cur - enemy_cur
+                reward_struct.last_frame_value = main_last - enemy_last
+                reward_struct.value = reward_struct.cur_frame_value - reward_struct.last_frame_value
+            elif reward_name == "forward":
                 reward_struct.value = self.m_main_calc_frame_map[reward_name].cur_frame_value
-            elif reward_name == "unsafe_forward":
-                reward_struct.value = -self.m_main_calc_frame_map[reward_name].cur_frame_value
-            elif reward_name in ["death", "hurt_by_hero"]:
-                reward_struct.value = -(
-                    self.m_main_calc_frame_map[reward_name].cur_frame_value
-                    - self.m_main_calc_frame_map[reward_name].last_frame_value
-                )
+                if GameConfig.REMOVE_FORWARD_AFTER is not None and frame_no > GameConfig.REMOVE_FORWARD_AFTER:
+                    reward_struct.value = 0.0
+            elif reward_name == "last_hit":
+                reward_struct.value = self.m_main_calc_frame_map[reward_name].cur_frame_value
             else:
-                # Calculate zero-sum reward
-                # 计算零和奖励
-                reward_struct.cur_frame_value = (
-                    self.m_main_calc_frame_map[reward_name].cur_frame_value
-                    - self.m_enemy_calc_frame_map[reward_name].cur_frame_value
-                )
-                reward_struct.last_frame_value = (
-                    self.m_main_calc_frame_map[reward_name].last_frame_value
-                    - self.m_enemy_calc_frame_map[reward_name].last_frame_value
-                )
+                main_cur = self.m_main_calc_frame_map[reward_name].cur_frame_value
+                enemy_cur = self.m_enemy_calc_frame_map[reward_name].cur_frame_value
+                main_last = self.m_main_calc_frame_map[reward_name].last_frame_value
+                enemy_last = self.m_enemy_calc_frame_map[reward_name].last_frame_value
+                reward_struct.cur_frame_value = main_cur - enemy_cur
+                reward_struct.last_frame_value = main_last - enemy_last
                 reward_struct.value = reward_struct.cur_frame_value - reward_struct.last_frame_value
 
-            weight_sum += reward_struct.weight
-            reward_sum += reward_struct.value * reward_struct.weight
-            reward_dict[reward_name] = reward_struct.value
+            time_scale = 1.0
+            if self.time_scale_arg > 0 and reward_name not in GameConfig.REWARD_WITHOUT_TIME_SCALE:
+                time_scale = math.pow(0.6, frame_no / self.time_scale_arg)
+
+            reward_dict[reward_name + "_origin"] = reward_struct.value
+            reward_dict[reward_name + "_weight"] = reward_struct.value * reward_struct.weight * time_scale
+            reward_sum += reward_dict[reward_name + "_weight"]
+
         reward_dict["reward_sum"] = reward_sum
-
-    def _safe_rate(self, obj, value_key, max_key):
-        if obj is None:
-            return 0.0
-        max_value = obj.get(max_key, 0)
-        if max_value <= 0:
-            return 0.0
-        return obj.get(value_key, 0) / max_value
-
-    def _safe_value(self, obj, key, default=0.0):
-        if obj is None:
-            return default
-        return obj.get(key, default)
-
-    def _estimate_last_hit_value(self, frame_data, camp, enemy_soldiers):
-        frame_action = frame_data.get("frame_action", {})
-        dead_actions = frame_action.get("dead_action", []) if isinstance(frame_action, dict) else []
-        if dead_actions:
-            last_hit_count = 0
-            for dead_action in dead_actions:
-                death = dead_action.get("death", {})
-                killer = dead_action.get("killer", {})
-                if death.get("camp") != camp and killer.get("camp") == camp and death.get("sub_type") != self.TOWER_SUB_TYPE:
-                    last_hit_count += 1
-            return last_hit_count
-        return sum(1 for soldier in enemy_soldiers if soldier.get("hp", 1) <= 0)
-
