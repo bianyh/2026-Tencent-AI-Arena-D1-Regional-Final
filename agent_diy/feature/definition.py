@@ -27,7 +27,7 @@ def lineup_iterator_roundrobin_camp_heroes(camp_heroes=None):
     return _lineup_iterator_shuffle_cycle(camps)
 
 
-ObsData = create_cls("ObsData", feature=None, legal_action=None, lstm_cell=None, lstm_hidden=None)
+ObsData = create_cls("ObsData", feature=None, legal_action=None, logit_bias=None, lstm_cell=None, lstm_hidden=None)
 
 ActData = create_cls(
     "ActData",
@@ -64,7 +64,7 @@ def build_frame(agent, observation):
     sub_action_mask = observation["sub_action_mask"]
     prob, value, action = act_data.prob, act_data.value, act_data.action
     lstm_cell, lstm_hidden = act_data.lstm_cell, act_data.lstm_hidden
-    legal_action = _update_legal_action(observation["legal_action"], action)
+    legal_action = _update_legal_action(obs_data.legal_action, action)
 
     return Frame(
         frame_no=frame_no,

@@ -120,7 +120,7 @@ class HeroInfo:
         s = self.hero_state
         self.player_id = s.get("player_id", 0)
         self.info = ActorInfo(s, inverse_position)
-        self.skill = SkillInfo(s.get("skill_state", {}))
+        self.skill = SkillInfo(s.get("skill_state", {"slot_states": s.get("slot_states", [])}))
         self.equip_state = s.get("equip_state", {})
         self.level = s.get("level", 1)
         self.exp = s.get("exp", 0)

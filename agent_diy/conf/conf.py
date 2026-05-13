@@ -12,13 +12,55 @@ class GameConfig:
         "death": -1.0,
         "kill": -0.6,
         "last_hit": 0.5,
-        "forward": 0.01,
+        "forward": 0.3,
+        "hero_damage": 0.002,
+        "skill_hit_hero": 0.2,
+        "skill_hit_unit": 0.05,
+        "skill_empty": -0.04,
+        "valid_attack": 0.04,
+        "empty_attack": -0.04,
+        "attack_move": 0.08,
+        "attack_no_move": -0.03,
+        "low_hp_safe": 0.5,
+        "eat_cake": 1.0,
+        "low_hp_heal": 0.6,
+        "bad_heal": -0.2,
+        "summoner_heal": 0.6,
+        "summoner_stun": 0.4,
+        "summoner_smite": 0.25,
+        "summoner_interfere": 0.4,
+        "summoner_purify": 0.4,
+        "summoner_execute": 0.8,
+        "summoner_sprint": 0.35,
+        "summoner_frenzy": 0.35,
+        "summoner_flash": 0.35,
+        "summoner_weaken": 0.4,
+        "summoner_bad": -0.2,
     }
-    REMOVE_FORWARD_AFTER = 1000
+    REMOVE_FORWARD_AFTER = 5000
     TIME_SCALE_ARG = 8000
     REWARD_WITHOUT_TIME_SCALE = set()
     MODEL_SAVE_INTERVAL = 1800
     CAMP_HEROES = [112, 133]
+    FORWARD_FULL_HP_RATE = 0.75
+    FORWARD_STOP_HP_RATE = 0.55
+    LOW_HP_SAFE_RATE = 0.65
+    LOW_HP_HEAL_RATE = 0.55
+    BAD_HEAL_HP_RATE = 0.8
+    CRITICAL_HP_RATE = 0.35
+    SAFE_DISTANCE_MAX = 50000
+    CAKE_PICKUP_RADIUS = 3500
+    SKILL_EMPTY_PENDING_FRAMES = 18
+    CLOSE_ENEMY_RANGE = 6500
+    SUMMONER_EFFECT_RANGE = 7000
+    ENEMY_TOWER_PRESSURE_RANGE = 11500
+    SAFE_PROGRESS_DISTANCE = 5000
+    CHASE_PROGRESS_DISTANCE = 7000
+    ATTACK_MOVE_PENDING_FRAMES = 12
+    ATTACK_MOVE_MIN_DISTANCE = 1200
+    ATTACK_MOVE_LOGIT_BIAS = 0.35
+    LUBAN_ENHANCED_ATTACK_IDS = {11201, 11203, 11204}
+    LUBAN_ENHANCED_ATTACK_BUFFS = {112015, 112044, 112045, 112046, 112047, 112048}
 
 
 class Args:
@@ -83,6 +125,7 @@ class Args:
     ]
     DIM_BUFF = len(BUFFS) + 1
     DIM_SUMMONER = len(SUMMONER_SKILL_IDS) + 5
+    DIM_CAKE = 2 + DIM_DISTANCE
     DIM_SKILL = 4 + int(CD_MAX_SIZE / CD_UNIT_SIZE) + 2
     DIM_HERO = (
         DIM_UNIT
@@ -117,7 +160,7 @@ class Args:
     DIM_BULLET = len(BULLET_SLOT) + 1 + DIM_DISTANCE
     DIM_BULLETS = DIM_BULLET * BULLET_MAX_NUM
 
-    DIM_ALL_UNITS = DIM_HERO * 2 + DIM_SOLDIERS * 2 + DIM_RIVER_CRAB + DIM_ORGAN * 2
+    DIM_ALL_UNITS = DIM_HERO * 2 + DIM_SOLDIERS * 2 + DIM_RIVER_CRAB + DIM_ORGAN * 2 + DIM_CAKE * 2
     DIM_ALL = DIM_ALL_UNITS + DIM_BULLETS
 
 
@@ -129,6 +172,8 @@ class DimConfig:
     DIM_OF_RIVER_CRAB = [Args.DIM_RIVER_CRAB]
     DIM_OF_ORGAN_1 = [Args.DIM_ORGAN]
     DIM_OF_ORGAN_2 = [Args.DIM_ORGAN]
+    DIM_OF_CAKE_1 = [Args.DIM_CAKE]
+    DIM_OF_CAKE_2 = [Args.DIM_CAKE]
     DIM_OF_BULLET_1_9 = [Args.DIM_BULLET] * (Args.BULLET_MAX_NUM - 1)
     DIM_OF_BULLET_10 = [Args.DIM_BULLET]
 
@@ -140,6 +185,7 @@ class Config:
     LSTM_UNIT_SIZE = 512
     DIM_PUBLIC = 512
     MULTI_HEAD = True
+    SYNC_HERO_HEAD_INIT = True
 
     DATA_SPLIT_SHAPE = [
         Args.DIM_ALL + 85,
@@ -171,7 +217,7 @@ class Config:
     INIT_LEARNING_RATE_START = 1e-5
     TARGET_LR = 1e-5
     TARGET_STEP = 1
-    BETA_START = 0.0
+    BETA_START = 0.025
     LOG_EPSILON = 1e-6
     LABEL_SIZE_LIST = [12, 16, 16, 16, 16, 9]
     IS_REINFORCE_TASK_LIST = [True, True, True, True, True, True]

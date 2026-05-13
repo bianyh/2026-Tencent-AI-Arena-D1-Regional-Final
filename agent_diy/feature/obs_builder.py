@@ -260,6 +260,22 @@ class ObsBuilder:
         assert len(result) == Args.DIM_ORGAN
         return result
 
+    def process_cake(self, cake: CakeInfo, is_enemy):
+        x = [0.0] * 2
+        cake_idx = int(is_enemy)
+        if cake is not None:
+            self.next_cake_frame[cake_idx] = self.n_frame + 76 * 30
+            x[0] = 1.0
+            x[1] = 0.0
+            position = cake.position
+        else:
+            x[0] = 0.0
+            x[1] = clip((self.next_cake_frame[cake_idx] - self.n_frame) / (75 * 30), 0, 1)
+            position = [Info.UNSEEN_PADDING, Info.UNSEEN_PADDING]
+        result = x + self.process_position(position)
+        assert len(result) == Args.DIM_CAKE
+        return result
+
     def process_bullet(self, bullet: BulletInfo):
         x = [0.0] * (Args.DIM_BULLET - Args.DIM_DISTANCE)
         if bullet.slot_type in Args.BULLET_SLOT:
@@ -299,6 +315,8 @@ class ObsBuilder:
         x_river_crab, mask_river_crab = self.process_river_crab()
         x_sub_tower_our = self.process_sub_tower(info.organ_our.sub_tower, info.cake_our, False)
         x_sub_tower_enemy = self.process_sub_tower(info.organ_enemy.sub_tower, info.cake_enemy, True)
+        x_cake_our = self.process_cake(info.cake_our, False)
+        x_cake_enemy = self.process_cake(info.cake_enemy, True)
 
         x_all_units = (
             x_hero_our
@@ -308,6 +326,8 @@ class ObsBuilder:
             + x_river_crab
             + x_sub_tower_our
             + x_sub_tower_enemy
+            + x_cake_our
+            + x_cake_enemy
         )
         assert len(x_all_units) == Args.DIM_ALL_UNITS, f"{len(x_all_units)=}, {Args.DIM_ALL_UNITS=}"
 

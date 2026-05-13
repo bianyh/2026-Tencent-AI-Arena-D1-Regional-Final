@@ -42,6 +42,7 @@ class Model(nn.Module):
             np.sum(DimConfig.DIM_OF_SOLDIER_5_8)
         )
         self.all_organ_feature_dim = int(np.sum(DimConfig.DIM_OF_ORGAN_1)) + int(np.sum(DimConfig.DIM_OF_ORGAN_2))
+        self.all_cake_feature_dim = int(np.sum(DimConfig.DIM_OF_CAKE_1)) + int(np.sum(DimConfig.DIM_OF_CAKE_2))
         self.all_bullet_feature_dim = int(np.sum(DimConfig.DIM_OF_BULLET_1_9)) + int(np.sum(DimConfig.DIM_OF_BULLET_10))
 
         self.position_delta_dim = 64 - Args.DIM_DISTANCE
@@ -72,7 +73,10 @@ class Model(nn.Module):
         self.bullet_hero_fc = make_fc_layer(fc_bullet_list[-2], fc_bullet_list[-1])
         self.bullet_organ_fc = make_fc_layer(fc_bullet_list[-2], fc_bullet_list[-1])
 
-        concat_dim = 128 * 2 + 32 * 2 + 32 + 32 * 2 + 32 * 2
+        fc_cake_dim_list = [Args.DIM_CAKE + self.position_delta_dim, 64, 32]
+        self.cake_mlp = MLP(fc_cake_dim_list, "cake_mlp")
+
+        concat_dim = 128 * 2 + 32 * 2 + 32 + 32 * 2 + 32 * 2 + 32 * 2
         self.concat_mlp = MLP([concat_dim, self.lstm_unit_size], "concat_mlp", non_linearity_last=True)
         self.concate_mlp_other = MLP([concat_dim, 512, self.lstm_unit_size], "concat_other_mlp")
         self.lstm_and_linear_mlp = MLP([self.lstm_unit_size * 2, self.dim_public], "lstm_and_linear_mlp", non_linearity_last=True)
@@ -108,6 +112,23 @@ class Model(nn.Module):
             [make_fc_layer(32, self.target_embed_dim, use_bias=False) for _ in range(Args.HERO_HEAD_NUM)]
         )
         self.value_mlps = nn.ModuleList([MLP([self.dim_public, 64, 1], f"hero{idx}_value_mlp") for idx in range(Args.HERO_HEAD_NUM)])
+        self.sync_hero_head_init()
+
+    def sync_hero_head_init(self):
+        if not Config.SYNC_HERO_HEAD_INIT or Args.HERO_HEAD_NUM <= 1:
+            return
+        for head_idx in range(1, Args.HERO_HEAD_NUM):
+            self._copy_module_weights(self.label_mlps[0], self.label_mlps[head_idx])
+            self._copy_module_weights(self.lstm_tar_embed_mlps[0], self.lstm_tar_embed_mlps[head_idx])
+            self._copy_module_weights(self.target_embed_mlps[0], self.target_embed_mlps[head_idx])
+            self._copy_module_weights(self.value_mlps[0], self.value_mlps[head_idx])
+
+    @staticmethod
+    def _copy_module_weights(source, target):
+        for source_param, target_param in zip(source.parameters(), target.parameters()):
+            target_param.data.copy_(source_param.data)
+        for source_buffer, target_buffer in zip(source.buffers(), target.buffers()):
+            target_buffer.data.copy_(source_buffer.data)
 
     def process_sub_feature(self, x, mlp, is_unit):
         parts = [x]
@@ -131,6 +152,7 @@ class Model(nn.Module):
                 self.all_soldier_feature_dim,
                 self.single_river_crab_feature_dim,
                 self.all_organ_feature_dim,
+                self.all_cake_feature_dim,
                 self.all_bullet_feature_dim,
             ],
             dim=1,
@@ -145,7 +167,10 @@ class Model(nn.Module):
         organ_vec_list = feature_vec_split_list[3].split(
             [int(np.sum(DimConfig.DIM_OF_ORGAN_1)), int(np.sum(DimConfig.DIM_OF_ORGAN_2))], dim=1
         )
-        bullet_vec_list = feature_vec_split_list[4].split(
+        cake_vec_list = feature_vec_split_list[4].split(
+            [int(np.sum(DimConfig.DIM_OF_CAKE_1)), int(np.sum(DimConfig.DIM_OF_CAKE_2))], dim=1
+        )
+        bullet_vec_list = feature_vec_split_list[5].split(
             [int(np.sum(DimConfig.DIM_OF_BULLET_1_9)), int(np.sum(DimConfig.DIM_OF_BULLET_10))], dim=1
         )
 
@@ -155,6 +180,8 @@ class Model(nn.Module):
         soldier_emy = soldier_vec_list[1].split(DimConfig.DIM_OF_SOLDIER_5_8, dim=1)
         organ_frd = organ_vec_list[0].split(DimConfig.DIM_OF_ORGAN_1, dim=1)
         organ_emy = organ_vec_list[1].split(DimConfig.DIM_OF_ORGAN_2, dim=1)
+        cake_frd = cake_vec_list[0].split(DimConfig.DIM_OF_CAKE_1, dim=1)
+        cake_emy = cake_vec_list[1].split(DimConfig.DIM_OF_CAKE_2, dim=1)
         bullet_hero = bullet_vec_list[0].split(DimConfig.DIM_OF_BULLET_1_9, dim=1)
         bullet_organ = bullet_vec_list[1].split(DimConfig.DIM_OF_BULLET_10, dim=1)
 
@@ -202,6 +229,16 @@ class Model(nn.Module):
             tar_embed_list.append(out)
         organ_emy_concat = torch.cat(organ_emy_results, dim=1)
 
+        cake_frd_results = []
+        for cake in cake_frd:
+            cake_frd_results.append(self.process_sub_feature(cake, self.cake_mlp, False))
+        cake_frd_concat = torch.cat(cake_frd_results, dim=1)
+
+        cake_emy_results = []
+        for cake in cake_emy:
+            cake_emy_results.append(self.process_sub_feature(cake, self.cake_mlp, False))
+        cake_emy_concat = torch.cat(cake_emy_results, dim=1)
+
         bullet_hero_results = []
         for bullet in bullet_hero:
             bullet_hero_results.append(self.bullet_hero_fc(self.process_sub_feature(bullet, self.bullet_mlp, False)))
@@ -226,6 +263,8 @@ class Model(nn.Module):
                 river_crab_result,
                 organ_frd_concat,
                 organ_emy_concat,
+                cake_frd_concat,
+                cake_emy_concat,
                 bullet_hero_concat,
                 bullet_organ_concat,
             ],

@@ -12,8 +12,8 @@ from agent_diy.feature.definition import (
     lineup_iterator_roundrobin_camp_heroes,
     sample_process,
 )
+from agent_diy.workflow.env_conf_manager import EnvConfManager
 from common_python.utils.workflow_disaster_recovery import handle_disaster_recovery
-from tools.env_conf_manager import EnvConfManager
 from tools.metrics_utils import get_training_metrics
 from tools.model_pool_utils import get_valid_model_pool
 

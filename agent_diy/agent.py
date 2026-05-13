@@ -10,6 +10,7 @@ from torch.optim.lr_scheduler import LambdaLR
 
 from agent_diy.algorithm.algorithm import Algorithm
 from agent_diy.conf.conf import Args, Config
+from agent_diy.feature.action_control import ActionController
 from agent_diy.feature.definition import ActData, ObsData
 from agent_diy.feature.obs_builder import ObsBuilder
 from agent_diy.feature.reward_process import GameRewardManager
@@ -29,6 +30,7 @@ SUMMONER_SKILL_IDS = Args.SUMMONER_SKILL_IDS
 
 class Agent(BaseAgent):
     _init_config_counter = 0
+    _summoner_skill_counters = {}
 
     def __init__(self, agent_type="player", device=None, logger=None, monitor=None):
         self.cur_model_name = ""
@@ -60,6 +62,7 @@ class Agent(BaseAgent):
         self.monitor = monitor
         self.info = Info()
         self.obs_builder = ObsBuilder(logger=logger)
+        self.action_controller = ActionController()
         self.hero_rearrange = HeroBatchRearrange()
 
         self.algorithm = Algorithm(self.model, self.optimizer, self.scheduler, self.device, self.logger, self.monitor)
@@ -77,10 +80,11 @@ class Agent(BaseAgent):
         opponent_heroes = config_data.get("opponent_heroes", [])
         Agent._init_config_counter += 1
         select_skills = {}
-        opponent_sum = sum(opponent_heroes) if opponent_heroes else 0
         for idx, hero_id in enumerate(my_heroes):
-            offset = Agent._init_config_counter + hero_id * 3 + opponent_sum + idx
-            select_skills[hero_id] = SUMMONER_SKILL_IDS[offset % len(SUMMONER_SKILL_IDS)]
+            key = (hero_id, tuple(opponent_heroes), idx)
+            counter = Agent._summoner_skill_counters.get(key, 0)
+            select_skills[hero_id] = SUMMONER_SKILL_IDS[counter % len(SUMMONER_SKILL_IDS)]
+            Agent._summoner_skill_counters[key] = counter + 1
         return select_skills
 
     def reset(self, observation):
@@ -103,6 +107,7 @@ class Agent(BaseAgent):
 
         feature = [obs_data.feature for obs_data in list_obs_data_reordered]
         legal_action = [obs_data.legal_action for obs_data in list_obs_data_reordered]
+        logit_bias = [obs_data.logit_bias for obs_data in list_obs_data_reordered]
         lstm_cell = [obs_data.lstm_cell for obs_data in list_obs_data_reordered]
         lstm_hidden = [obs_data.lstm_hidden for obs_data in list_obs_data_reordered]
 
@@ -123,6 +128,7 @@ class Agent(BaseAgent):
 
         np_output = [output.detach().cpu().numpy() for output in output_list]
         logits, value, new_lstm_cell, new_lstm_hidden = np_output[:4]
+        logits = logits + np.array(logit_bias, dtype=np.float32)
         new_lstm_cell = new_lstm_cell.squeeze(axis=0)
         new_lstm_hidden = new_lstm_hidden.squeeze(axis=0)
 
@@ -157,15 +163,25 @@ class Agent(BaseAgent):
     def observation_process(self, observation):
         self.info.update(observation)
         feature = self.obs_builder.build_observation(self.info)
+        legal_action = self.action_controller.refine_legal_action(observation["legal_action"], self.info)
+        logit_bias = self.action_controller.build_logit_bias(self.info)
         return ObsData(
             feature=feature,
-            legal_action=observation["legal_action"],
+            legal_action=legal_action,
+            logit_bias=logit_bias,
             lstm_cell=self.lstm_cell,
             lstm_hidden=self.lstm_hidden,
         )
 
     def action_process(self, observation, act_data, is_stochastic):
-        return act_data.action if is_stochastic else act_data.d_action
+        action = act_data.action if is_stochastic else act_data.d_action
+        if not is_stochastic:
+            action = self.action_controller.fallback_action(action, self.info)
+            act_data.d_action = action
+        self.action_controller.record_executed_action(action, self.info)
+        if self.reward_manager is not None:
+            self.reward_manager.set_last_action(action)
+        return action
 
     def learn(self, list_sample_data):
         return self.algorithm.learn(list_sample_data)
