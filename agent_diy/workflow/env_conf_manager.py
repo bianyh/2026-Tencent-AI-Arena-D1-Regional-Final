@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 
-import json
 import random
 from pathlib import Path
 
@@ -73,7 +72,6 @@ class EnvConfManager:
         episode_conf["opponent_agent"] = str(episode_conf.get("opponent_agent", "selfplay"))
         episode_conf["eval_interval"] = int(episode_conf.get("eval_interval", 10))
         episode_conf["eval_opponent_type"] = str(episode_conf.get("eval_opponent_type", "common_ai"))
-        episode_conf["eval_include_model_pool"] = bool(episode_conf.get("eval_include_model_pool", False))
         if episode_conf["eval_interval"] < 1:
             raise ValueError("episode.eval_interval must be >= 1")
 
@@ -91,40 +89,8 @@ class EnvConfManager:
 
     def _build_eval_opponent_types(self):
         episode_conf = self.usr_conf["episode"]
-        opponents = episode_conf.get("eval_opponent_types")
-        if not opponents:
-            opponents = [episode_conf.get("eval_opponent_type", "common_ai")]
-        if isinstance(opponents, str):
-            opponents = [opponents]
-
-        opponents = [str(opponent) for opponent in opponents if str(opponent)]
-        if episode_conf.get("eval_include_model_pool", False):
-            opponents.extend(self._read_model_pool_ids())
-
-        deduped = []
-        seen = set()
-        for opponent in opponents:
-            if opponent in seen:
-                continue
-            seen.add(opponent)
-            deduped.append(opponent)
-
-        if not deduped:
-            deduped = ["common_ai"]
-        episode_conf["eval_opponent_types"] = deduped
-        return deduped
-
-    def _read_model_pool_ids(self):
-        kaiwu_json = Path("kaiwu.json")
-        if not kaiwu_json.exists():
-            return []
-        try:
-            data = json.loads(kaiwu_json.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            if self.logger:
-                self.logger.warning("kaiwu.json is not valid json, skip model_pool opponents")
-            return []
-        return [str(model_id) for model_id in data.get("model_pool", [])]
+        opponent = str(episode_conf.get("eval_opponent_type", "common_ai"))
+        return [opponent if opponent else "common_ai"]
 
     def get_current_config(self):
         return self.usr_conf

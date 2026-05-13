@@ -5,22 +5,9 @@ auto_switch_monitor_side = true
 [episode]
 opponent_agent = "selfplay"
 eval_interval = 10
-eval_opponent_type = "common_ai"
-
-# 训练中评估对手轮换列表。可以同时写 common_ai、selfplay、以及当前平台模型管理中的自定义模型 ID。
-# 自定义模型 ID 必须也配置在 kaiwu.json 的 model_pool 中，否则平台侧 load_opponent_agent 会拒绝加载。
-# 示例：
-# eval_opponent_types = ["common_ai", "123456", "234567"]
-eval_opponent_types = [
-    "common_ai",
-    "260205",
-    "260218",
-    "260224",
-]
-
-# 是否自动把 kaiwu.json 中的 model_pool 追加进 eval_opponent_types。
-# 当前固定为 common_ai + 3 个模型 ID，共四个评估对手；设为 false 避免 kaiwu.json 后续变化影响评估集合。
-eval_include_model_pool = false
+# 训练中评估建议一次只选择一个对手。可选 common_ai，或 kaiwu.json/model_pool 中的一个模型 ID。
+# 如需分别对比 260205、260218、260224 或 common_ai，建议分多次训练/评估任务切换此字段。
+eval_opponent_type = "260205"
 
 [[lineups.blue_camp]]
 # 默认阵容仅作为 env.reset 配置模板。训练工作流会在每局开始前用 [112, 133] 的全组合轮转覆盖这里。
