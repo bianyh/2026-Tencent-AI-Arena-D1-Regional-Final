@@ -4,7 +4,7 @@
 import os
 import time
 
-from agent_diy.conf.conf import GameConfig
+from agent_diy.conf.conf import Config, GameConfig
 from agent_diy.feature.definition import (
     FrameCollector,
     NONE_ACTION,
@@ -16,6 +16,27 @@ from agent_diy.workflow.env_conf_manager import EnvConfManager
 from common_python.utils.workflow_disaster_recovery import handle_disaster_recovery
 from tools.metrics_utils import get_training_metrics
 from tools.model_pool_utils import get_valid_model_pool
+
+
+def sanitize_env_action(action):
+    if action is None:
+        return list(NONE_ACTION)
+    if hasattr(action, "tolist"):
+        action = action.tolist()
+    if isinstance(action, tuple):
+        action = list(action)
+    while isinstance(action, list) and len(action) == 1 and isinstance(action[0], (list, tuple)):
+        action = list(action[0])
+    if not isinstance(action, list) or len(action) != len(Config.LABEL_SIZE_LIST):
+        return list(NONE_ACTION)
+    sanitized = []
+    for idx, value in enumerate(action):
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return list(NONE_ACTION)
+        sanitized.append(max(0, min(value, Config.LABEL_SIZE_LIST[idx] - 1)))
+    return sanitized
 
 
 def workflow(envs, agents, logger=None, monitor=None, *args, **kwargs):
@@ -127,14 +148,15 @@ class EpisodeRunner:
                 ):
                     if do_predict:
                         if not is_eval:
-                            actions[index] = agent.predict(observation[str(index)])
+                            actions[index] = sanitize_env_action(agent.predict(observation[str(index)]))
                         else:
-                            actions[index] = agent.exploit(observation[str(index)])
+                            actions[index] = sanitize_env_action(agent.exploit(observation[str(index)]))
 
                         if not is_eval and do_sample:
                             frame = build_frame(agent, observation[str(index)])
                             frame_collector.save_frame(frame, agent_id=index)
 
+                actions = [sanitize_env_action(action) for action in actions]
                 _env_reward, env_obs = self.env.step(actions)
                 if handle_disaster_recovery(env_obs, self.logger):
                     break

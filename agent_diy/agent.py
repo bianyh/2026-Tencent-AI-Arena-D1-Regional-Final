@@ -175,6 +175,7 @@ class Agent(BaseAgent):
 
     def action_process(self, observation, act_data, is_stochastic):
         action = act_data.action if is_stochastic else act_data.d_action
+        action = self._normalize_env_action(action)
         if not is_stochastic:
             action = self.action_controller.fallback_action(action, self.info)
             act_data.d_action = action
@@ -182,6 +183,26 @@ class Agent(BaseAgent):
         if self.reward_manager is not None:
             self.reward_manager.set_last_action(action)
         return action
+
+    def _normalize_env_action(self, action):
+        if action is None:
+            return [0, 15, 15, 15, 15, 0]
+        if isinstance(action, np.ndarray):
+            action = action.tolist()
+        if isinstance(action, tuple):
+            action = list(action)
+        while isinstance(action, list) and len(action) == 1 and isinstance(action[0], (list, tuple, np.ndarray)):
+            action = action[0].tolist() if isinstance(action[0], np.ndarray) else list(action[0])
+        if not isinstance(action, list) or len(action) != len(self.label_size_list):
+            return [0, 15, 15, 15, 15, 0]
+        fixed = []
+        for idx, value in enumerate(action):
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                value = 0
+            fixed.append(max(0, min(value, self.label_size_list[idx] - 1)))
+        return fixed
 
     def learn(self, list_sample_data):
         return self.algorithm.learn(list_sample_data)
@@ -244,17 +265,34 @@ class Agent(BaseAgent):
         return [prob_list], [d_prob_list], action_list, d_action_list
 
     def _legal_soft_max(self, input_hidden, legal_action):
-        legal_action = np.array(legal_action)
+        input_hidden = np.nan_to_num(np.array(input_hidden, dtype=np.float64), nan=0.0, posinf=1e6, neginf=-1e6)
+        legal_action = np.array(legal_action, dtype=np.float64)
         if legal_action.sum() <= 0:
             legal_action = np.ones_like(legal_action)
+        else:
+            legal_action = (legal_action > 0).astype(np.float64)
         lsm_const_w, lsm_const_e = 1e20, 1e-5
         tmp = input_hidden - lsm_const_w * (1.0 - legal_action)
         tmp_max = np.max(tmp, keepdims=True)
         tmp = np.clip(tmp - tmp_max, -lsm_const_w, 1)
         tmp = (np.exp(tmp) + lsm_const_e) * legal_action
-        return tmp / np.sum(tmp, keepdims=True)
+        probs = tmp / np.sum(tmp, keepdims=True)
+        probs = np.nan_to_num(probs, nan=0.0, posinf=0.0, neginf=0.0) * legal_action
+        prob_sum = probs.sum(dtype=np.float64)
+        if prob_sum <= 0:
+            probs = legal_action / legal_action.sum(dtype=np.float64)
+        else:
+            probs = probs / prob_sum
+        return probs.astype(np.float64)
 
     def _legal_sample(self, probs, legal_action=None, use_max=False):
+        probs = np.nan_to_num(np.array(probs, dtype=np.float64), nan=0.0, posinf=0.0, neginf=0.0)
+        probs = np.maximum(probs, 0.0)
+        total = probs.sum(dtype=np.float64)
+        if total <= 0:
+            probs = np.ones_like(probs, dtype=np.float64) / len(probs)
+        else:
+            probs = probs / total
         if use_max:
             return int(np.argmax(probs))
-        return int(np.argmax(np.random.multinomial(1, probs, size=1)))
+        return int(np.random.choice(len(probs), p=probs))
