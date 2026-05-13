@@ -120,7 +120,7 @@ class HeroInfo:
         s = self.hero_state
         self.player_id = s.get("player_id", 0)
         self.info = ActorInfo(s, inverse_position)
-        self.skill = SkillInfo(s.get("skill_state", {"slot_states": s.get("slot_states", [])}))
+        self.skill = SkillInfo(s.get("skill_state") or {"slot_states": s.get("slot_states", [])})
         self.equip_state = s.get("equip_state", {})
         self.level = s.get("level", 1)
         self.exp = s.get("exp", 0)
@@ -163,6 +163,7 @@ class ActorInfo:
 
 class SkillInfo:
     def __init__(self, skill_state):
+        skill_state = skill_state or {}
         slots = skill_state.get("slot_states", [])
         self.slot_by_type = {slot.get("slot_type"): SlotInfo(slot) for slot in slots}
         self.normal_attack = self.slot_by_type.get(0, SlotInfo())
@@ -325,6 +326,7 @@ class ActionActorInfo:
 
 class BuffInfo:
     def __init__(self, buff_state):
+        buff_state = buff_state or {}
         self.skills: List[BuffSkillInfo] = []
         self.skill_ids: List[int] = []
         self.marks: List[BuffMarkInfo] = []

@@ -256,9 +256,19 @@ class ActionController:
 
     def mask_action(self, action, info: Info):
         mask = info.sub_action_mask.get(str(action[0])) if isinstance(info.sub_action_mask, dict) else None
-        if mask is None:
+        if hasattr(mask, "tolist"):
+            mask = mask.tolist()
+        if isinstance(mask, tuple):
+            mask = list(mask)
+        if not isinstance(mask, list) or len(mask) != len(Config.LABEL_SIZE_LIST):
             return action
-        return (np.array(action, dtype=np.int32) * np.array(mask, dtype=np.int32)).astype(np.int32).tolist()
+        fixed_mask = []
+        for value in mask:
+            try:
+                fixed_mask.append(1 if int(value) > 0 else 0)
+            except (TypeError, ValueError):
+                fixed_mask.append(1)
+        return (np.array(action, dtype=np.int32) * np.array(fixed_mask, dtype=np.int32)).astype(np.int32).tolist()
 
     def delta_action_16x16(self, current, target):
         if current[0] == Info.UNSEEN_PADDING or target[0] == Info.UNSEEN_PADDING:

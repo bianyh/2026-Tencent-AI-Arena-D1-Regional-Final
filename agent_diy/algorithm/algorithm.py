@@ -7,7 +7,7 @@ import time
 import numpy as np
 import torch
 
-from agent_diy.conf.conf import Config
+from agent_diy.conf.conf import Args, Config
 from agent_diy.utils.hero_batch import HeroBatchRearrange
 
 
@@ -29,14 +29,21 @@ class Algorithm:
         self.hero_rearrange = HeroBatchRearrange()
 
     def _get_sample_array(self, sample_data):
-        return sample_data.sample
+        sample = sample_data.sample
+        if isinstance(sample, torch.Tensor):
+            return sample
+        return torch.as_tensor(sample, dtype=torch.float32)
 
     def _get_hero_idx(self, sample_data):
         sample = self._get_sample_array(sample_data)
         value = sample[0]
         if hasattr(value, "item"):
             value = value.item()
-        return int(round(float(value)))
+        try:
+            hero_idx = int(round(float(value)))
+        except (TypeError, ValueError, OverflowError):
+            hero_idx = 0
+        return max(0, min(hero_idx, Args.HERO_HEAD_NUM - 1))
 
     def learn(self, list_sample_data):
         if not list_sample_data:

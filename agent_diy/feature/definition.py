@@ -62,9 +62,12 @@ def build_frame(agent, observation):
     feature_vec = np.array(obs_data.feature if obs_data.feature is not None else observation["feature"])
     reward = observation["reward"]["reward_sum"]
     sub_action_mask = observation["sub_action_mask"]
-    prob, value, action = act_data.prob, act_data.value, act_data.action
+    prob, value = act_data.prob, act_data.value
+    action = _normalize_action(act_data.action)
+    act_data.action = action
     lstm_cell, lstm_hidden = act_data.lstm_cell, act_data.lstm_hidden
     legal_action = _update_legal_action(obs_data.legal_action, action)
+    sub_action = _get_sub_action_mask(sub_action_mask, action)
 
     return Frame(
         frame_no=frame_no,
@@ -77,7 +80,7 @@ def build_frame(agent, observation):
         next_value=0,
         advantage=0,
         prob=prob,
-        sub_action=sub_action_mask[str(action[0])],
+        sub_action=sub_action,
         lstm_info=np.concatenate([lstm_cell.flatten(), lstm_hidden.flatten()]).reshape([-1]),
         is_train=False if action[0] < 0 else is_train,
     )
@@ -86,11 +89,54 @@ def build_frame(agent, observation):
 def _update_legal_action(original_la, action):
     target_size = Config.LABEL_SIZE_LIST[-1]
     top_size = Config.LABEL_SIZE_LIST[0]
-    original_la = np.array(original_la)
+    original_la = np.array(original_la, dtype=np.float32)
+    expected_size = sum(Config.LEGAL_ACTION_SIZE_LIST)
+    if original_la.size != expected_size:
+        fixed = np.ones(expected_size, dtype=np.float32)
+        return _update_legal_action(fixed, action)
     fix_part = original_la[: -target_size * top_size]
     target_la = original_la[-target_size * top_size :]
     target_la = target_la.reshape([top_size, target_size])[action[0]]
     return np.concatenate([fix_part, target_la], axis=0)
+
+
+def _normalize_action(action):
+    if action is None:
+        return list(NONE_ACTION)
+    if isinstance(action, np.ndarray):
+        action = action.tolist()
+    if isinstance(action, tuple):
+        action = list(action)
+    while isinstance(action, list) and len(action) == 1 and isinstance(action[0], (list, tuple, np.ndarray)):
+        action = action[0].tolist() if isinstance(action[0], np.ndarray) else list(action[0])
+    if not isinstance(action, list) or len(action) != len(Config.LABEL_SIZE_LIST):
+        return list(NONE_ACTION)
+    fixed = []
+    for idx, value in enumerate(action):
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            value = NONE_ACTION[idx]
+        fixed.append(max(0, min(value, Config.LABEL_SIZE_LIST[idx] - 1)))
+    return fixed
+
+
+def _get_sub_action_mask(sub_action_mask, action):
+    default = [1, 1, 1, 1, 1, 1]
+    if isinstance(sub_action_mask, dict):
+        mask = sub_action_mask.get(str(action[0]), sub_action_mask.get(action[0], default))
+    else:
+        try:
+            mask = sub_action_mask[action[0]]
+        except (TypeError, IndexError):
+            mask = default
+    if hasattr(mask, "tolist"):
+        mask = mask.tolist()
+    if isinstance(mask, tuple):
+        mask = list(mask)
+    if not isinstance(mask, list) or len(mask) != len(Config.LABEL_SIZE_LIST):
+        return default
+    return [1 if int(value) > 0 else 0 for value in mask]
 
 
 class FrameCollector:

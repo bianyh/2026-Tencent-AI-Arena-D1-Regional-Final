@@ -27,6 +27,8 @@ def sanitize_env_action(action):
         action = list(action)
     while isinstance(action, list) and len(action) == 1 and isinstance(action[0], (list, tuple)):
         action = list(action[0])
+    while isinstance(action, list) and len(action) == 1 and hasattr(action[0], "tolist"):
+        action = action[0].tolist()
     if not isinstance(action, list) or len(action) != len(Config.LABEL_SIZE_LIST):
         return list(NONE_ACTION)
     sanitized = []
@@ -214,8 +216,8 @@ class EpisodeRunner:
                 elif opponent_agent == "selfplay":
                     agent.load_model(id="latest")
                 else:
-                    eval_candidate_model = get_valid_model_pool(self.logger)
-                    if int(opponent_agent) not in eval_candidate_model:
+                    eval_candidate_model = get_valid_model_pool(self.logger) or []
+                    if str(opponent_agent) not in {str(model_id) for model_id in eval_candidate_model}:
                         raise Exception(f"opponent_agent model_id {opponent_agent} not in {eval_candidate_model}")
                     if is_train_test:
                         self.logger.info("Run train_test, cannot get opponent agent, so replace with latest model")

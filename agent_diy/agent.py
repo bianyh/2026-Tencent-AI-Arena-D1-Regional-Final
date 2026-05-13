@@ -97,7 +97,11 @@ class Agent(BaseAgent):
         self.obs_builder.reset()
 
     def _hero_index_from_obs_data(self, obs_data):
-        return int(round(float(obs_data.feature[0])))
+        try:
+            hero_idx = int(round(float(obs_data.feature[0])))
+        except (TypeError, ValueError, OverflowError):
+            hero_idx = 0
+        return max(0, min(hero_idx, Args.HERO_HEAD_NUM - 1))
 
     def _model_inference(self, list_obs_data):
         hero_idx = [self._hero_index_from_obs_data(obs_data) for obs_data in list_obs_data]
@@ -178,7 +182,10 @@ class Agent(BaseAgent):
         action = self._normalize_env_action(action)
         if not is_stochastic:
             action = self.action_controller.fallback_action(action, self.info)
+            action = self._normalize_env_action(action)
             act_data.d_action = action
+        else:
+            act_data.action = action
         self.action_controller.record_executed_action(action, self.info)
         if self.reward_manager is not None:
             self.reward_manager.set_last_action(action)
@@ -187,6 +194,8 @@ class Agent(BaseAgent):
     def _normalize_env_action(self, action):
         if action is None:
             return [0, 15, 15, 15, 15, 0]
+        while isinstance(action, np.ndarray) and action.ndim > 1 and action.shape[0] == 1:
+            action = action.tolist()
         if isinstance(action, np.ndarray):
             action = action.tolist()
         if isinstance(action, tuple):
@@ -236,6 +245,10 @@ class Agent(BaseAgent):
         action_list = []
         d_action_list = []
         label_split_size = [sum(self.label_size_list[: index + 1]) for index in range(len(self.label_size_list))]
+        expected_legal_size = sum(self.legal_action_size)
+        legal_action = np.array(legal_action, dtype=np.float64).reshape(-1)
+        if legal_action.size != expected_legal_size:
+            legal_action = np.ones(expected_legal_size, dtype=np.float64)
         legal_actions = np.split(legal_action, label_split_size[:-1])
         logits_split = np.split(logits, label_split_size[:-1])
 
@@ -295,4 +308,11 @@ class Agent(BaseAgent):
             probs = probs / total
         if use_max:
             return int(np.argmax(probs))
+        if probs.size > 0:
+            probs[-1] = max(0.0, 1.0 - probs[:-1].sum(dtype=np.float64))
+            total = probs.sum(dtype=np.float64)
+            if total <= 0:
+                probs = np.ones_like(probs, dtype=np.float64) / len(probs)
+            else:
+                probs = probs / total
         return int(np.random.choice(len(probs), p=probs))
