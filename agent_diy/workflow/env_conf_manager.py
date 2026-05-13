@@ -5,6 +5,8 @@ import json
 import random
 from pathlib import Path
 
+from agent_diy.conf.conf import Args
+
 try:
     import tomllib
 except ImportError:  # pragma: no cover
@@ -17,6 +19,8 @@ except ImportError:  # pragma: no cover
 
 
 class EnvConfManager:
+    _fallback_skill_counters = {}
+
     def __init__(self, config_path, logger):
         self.config_path = config_path
         self.logger = logger
@@ -80,6 +84,8 @@ class EnvConfManager:
                 raise ValueError(f"lineups.{camp_key} must contain one hero config")
             for hero_conf in camp_lineup:
                 hero_conf["hero_id"] = int(hero_conf["hero_id"])
+                cls = self.__class__
+                cls.normalize_select_skill(hero_conf)
 
         return usr_conf
 
@@ -166,4 +172,52 @@ class EnvConfManager:
         for hero_conf in usr_conf["lineups"][camp_key]:
             hero_id = hero_conf["hero_id"]
             if hero_id in select_skills:
-                hero_conf["summoner_skill_id"] = select_skills[hero_id]
+                skill_id = int(select_skills[hero_id])
+                hero_conf["select_skill"] = skill_id
+                hero_conf["summoner_skill_id"] = skill_id
+            EnvConfManager.normalize_select_skill(hero_conf)
+
+    @staticmethod
+    def normalize_select_skill(hero_conf):
+        skill_id = hero_conf.get("select_skill", hero_conf.get("summoner_skill_id"))
+        if skill_id is None:
+            return
+        skill_id = int(skill_id)
+        hero_conf["select_skill"] = skill_id
+        hero_conf["summoner_skill_id"] = skill_id
+
+    @classmethod
+    def build_fallback_select_skills(cls, my_hero_ids, opponent_hero_ids, camp_key, episode_idx):
+        select_skills = {}
+        opponent_key = tuple(opponent_hero_ids or [])
+        for idx, hero_id in enumerate(my_hero_ids):
+            key = (camp_key, int(hero_id), opponent_key, idx)
+            counter = cls._fallback_skill_counters.get(key, 0)
+            select_skills[int(hero_id)] = Args.SUMMONER_SKILL_IDS[counter % len(Args.SUMMONER_SKILL_IDS)]
+            cls._fallback_skill_counters[key] = counter + 1
+        return select_skills
+
+    @staticmethod
+    def ensure_select_skills(usr_conf, episode_idx=0):
+        blue_hero_ids, red_hero_ids = EnvConfManager.extract_hero_ids_from_usr_conf(usr_conf)
+        camp_specs = (
+            ("blue_camp", blue_hero_ids, red_hero_ids),
+            ("red_camp", red_hero_ids, blue_hero_ids),
+        )
+        for camp_key, my_hero_ids, opponent_hero_ids in camp_specs:
+            missing = [
+                hero_conf
+                for hero_conf in usr_conf["lineups"][camp_key]
+                if "select_skill" not in hero_conf and "summoner_skill_id" not in hero_conf
+            ]
+            if missing:
+                select_skills = EnvConfManager.build_fallback_select_skills(
+                    my_hero_ids,
+                    opponent_hero_ids,
+                    camp_key,
+                    episode_idx,
+                )
+                EnvConfManager.inject_select_skills(usr_conf, camp_key, select_skills)
+            else:
+                for hero_conf in usr_conf["lineups"][camp_key]:
+                    EnvConfManager.normalize_select_skill(hero_conf)

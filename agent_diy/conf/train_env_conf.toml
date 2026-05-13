@@ -25,7 +25,13 @@ eval_include_model_pool = false
 [[lineups.blue_camp]]
 # 默认阵容仅作为 env.reset 配置模板。训练工作流会在每局开始前用 [112, 133] 的全组合轮转覆盖这里。
 hero_id = 112
+# 环境实际校验字段名为 select_skill；训练工作流会在每局 init_config 后覆盖。
+select_skill = 80102
+summoner_skill_id = 80102
 
 [[lineups.red_camp]]
 # 默认阵容仅作为 env.reset 配置模板。训练工作流会在每局开始前用 [112, 133] 的全组合轮转覆盖这里。
 hero_id = 112
+# 环境实际校验字段名为 select_skill；训练工作流会在每局 init_config 后覆盖。
+select_skill = 80102
+summoner_skill_id = 80102

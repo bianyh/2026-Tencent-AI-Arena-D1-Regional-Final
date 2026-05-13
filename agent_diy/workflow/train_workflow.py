@@ -98,6 +98,7 @@ class EpisodeRunner:
             lineup = next(self.lineup_iterator)
             usr_conf, is_eval, monitor_side = self.env_conf_manager.update_config(lineup)
             self._call_init_config(usr_conf)
+            EnvConfManager.ensure_select_skills(usr_conf, episode_idx=self.episode_cnt)
 
             env_obs = self.env.reset(usr_conf=usr_conf)
             if handle_disaster_recovery(env_obs, self.logger):
